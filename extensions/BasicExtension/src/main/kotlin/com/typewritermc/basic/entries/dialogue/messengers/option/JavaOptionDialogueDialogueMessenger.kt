@@ -1,8 +1,13 @@
 package com.typewritermc.basic.entries.dialogue.messengers.option
 
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueOption
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueState
 import com.typewritermc.basic.entries.dialogue.Option
 import com.typewritermc.basic.entries.dialogue.OptionContextKeys
 import com.typewritermc.basic.entries.dialogue.OptionDialogueEntry
+import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
+import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.core.utils.around
 import com.typewritermc.core.utils.loopingDistance
@@ -160,6 +165,10 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
 
     private fun displayMessage(playTime: Duration) {
         val rawText = parsedText.stripped()
+        if (KukeUiDialogueBridge.hasMod(player)) {
+            sendKukeUiDialogue(rawText)
+            return
+        }
 
         val typePercentage =
             if (typeDuration.isZero) {
@@ -182,6 +191,40 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
 
         val component = player.chatHistory.composeDarkMessage(message)
         player.sendMessage(component)
+    }
+
+    private fun sendKukeUiDialogue(rawText: String) {
+        val typingDuration = typingDurationType.totalDuration(rawText, typeDuration)
+        val optionsShowingDuration = Duration.ofMillis(usableOptions.size * delayOptionShow.toLong())
+        KukeUiDialogueBridge.update(
+            player,
+            KukeUiDialogueState(
+                sessionId = kukeUiDialogueSessionId(player, entry.id),
+                kind = "option",
+                speakerName = speakerDisplayName,
+                text = parsedText,
+                typingMillis = typingDuration.toKukeUiMillis(),
+                waitMillis = optionsShowingDuration.toKukeUiMillis(),
+                canFinish = false,
+                showAvatar = true,
+                selectedIndex = selectedIndex,
+                options = usableOptions.mapIndexed { index, option ->
+                    KukeUiDialogueOption(
+                        index = index,
+                        text = option.text.get(player).parsePlaceholders(player),
+                        selected = index == selectedIndex,
+                    )
+                },
+            ),
+            onContinue = { completeOrFinish() },
+            onSelect = { index ->
+                if (index in usableOptions.indices) {
+                    selectedIndex = index
+                    animationComplete = true
+                    state = MessengerState.FINISHED
+                }
+            },
+        )
     }
 
     private fun formatOptions(rawText: String): Component {

@@ -1,6 +1,10 @@
 package com.typewritermc.basic.entries.dialogue.messengers.spoken
 
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueState
 import com.typewritermc.basic.entries.dialogue.SpokenDialogueEntry
+import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
+import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.*
 import com.typewritermc.engine.paper.extensions.placeholderapi.parsePlaceholders
@@ -65,12 +69,32 @@ class JavaSpokenDialogueDialogueMessenger(player: Player, context: InteractionCo
     override fun tick(context: TickContext) {
         if (state != MessengerState.RUNNING) return
         playedTime += context.deltaTime
+        if (KukeUiDialogueBridge.hasMod(player)) {
+            sendKukeUiDialogue()
+            return
+        }
         player.sendSpokenDialogue(
             text,
             speakerDisplayName,
             entry.duration.get(player),
             playedTime,
             eventTriggers.isEmpty()
+        )
+    }
+
+    private fun sendKukeUiDialogue() {
+        KukeUiDialogueBridge.update(
+            player,
+            KukeUiDialogueState(
+                sessionId = kukeUiDialogueSessionId(player, entry.id),
+                kind = "spoken",
+                speakerName = speakerDisplayName,
+                text = text,
+                typingMillis = typingDuration.toKukeUiMillis(),
+                canFinish = eventTriggers.isEmpty(),
+                showAvatar = true,
+            ),
+            onContinue = { completeOrFinish() },
         )
     }
 

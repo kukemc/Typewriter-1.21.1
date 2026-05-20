@@ -7,6 +7,7 @@ import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPl
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPositionAndRotation
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerPositionAndLook
 import com.typewritermc.basic.entries.cinematic.DisplayCameraAction.Companion.BASE_INTERPOLATION
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
 import com.typewritermc.basic.entries.variables.PlayerPositionOverride
 import com.typewritermc.core.books.pages.Colors
 import com.typewritermc.core.extension.annotations.*
@@ -146,6 +147,7 @@ class CameraCinematicAction(
     private var lastFrame: Int = 0
 
     override suspend fun setup() {
+        KukeUiDialogueBridge.cameraStart(player, entry.id)
         action = if (player.isFloodgate) {
             val geyserConnection = player.geyserConnection
             if (geyserConnection != null) {
@@ -301,6 +303,7 @@ class CameraCinematicAction(
     }
 
     override suspend fun teardown() {
+        KukeUiDialogueBridge.cameraStop(player, entry.id)
         super.teardown()
         action.stop()
         player.teardown()

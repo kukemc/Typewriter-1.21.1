@@ -1,6 +1,8 @@
 package com.typewritermc.basic.entries.dialogue.messengers.timed
 
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
 import com.typewritermc.basic.entries.dialogue.TimedDialogueEntry
+import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.*
 import com.typewritermc.engine.paper.extensions.placeholderapi.parsePlaceholders
@@ -88,6 +90,29 @@ class JavaTimedDialogueDialogueMessenger(player: Player, context: InteractionCon
 
         if (playedTime >= totalDuration) {
             state = MessengerState.FINISHED
+            return
+        }
+
+        if (KukeUiDialogueBridge.hasMod(player)) {
+            KukeUiDialogueBridge.update(
+                player,
+                KukeUiDialogueBridge.baseState(
+                    player = player,
+                    entry = entry,
+                    kind = "timed",
+                    speakerName = speakerDisplayName,
+                    text = text,
+                    typingMillis = typingDuration.toKukeUiMillis(),
+                    waitMillis = waitDuration.toKukeUiMillis(),
+                    allowSkip = entry.allowSkip.get(player, this.context),
+                    canFinish = false,
+                ),
+                onContinue = {
+                    if (state != MessengerState.RUNNING) return@update
+                    if (!canSkip) return@update
+                    completeOrFinish()
+                },
+            )
             return
         }
 

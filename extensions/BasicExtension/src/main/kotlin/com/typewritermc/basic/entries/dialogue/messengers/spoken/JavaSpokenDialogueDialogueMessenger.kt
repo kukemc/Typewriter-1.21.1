@@ -1,9 +1,7 @@
 package com.typewritermc.basic.entries.dialogue.messengers.spoken
 
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
-import com.typewritermc.basic.entries.dialogue.KukeUiDialogueState
 import com.typewritermc.basic.entries.dialogue.SpokenDialogueEntry
-import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
 import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.*
@@ -85,14 +83,14 @@ class JavaSpokenDialogueDialogueMessenger(player: Player, context: InteractionCo
     private fun sendKukeUiDialogue() {
         KukeUiDialogueBridge.update(
             player,
-            KukeUiDialogueState(
-                sessionId = kukeUiDialogueSessionId(player, entry.id),
+            KukeUiDialogueBridge.baseState(
+                player = player,
+                entry = entry,
                 kind = "spoken",
                 speakerName = speakerDisplayName,
                 text = text,
                 typingMillis = typingDuration.toKukeUiMillis(),
                 canFinish = eventTriggers.isEmpty(),
-                showAvatar = true,
             ),
             onContinue = { completeOrFinish() },
         )

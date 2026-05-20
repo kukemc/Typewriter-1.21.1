@@ -2,11 +2,9 @@ package com.typewritermc.basic.entries.dialogue.messengers.option
 
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueOption
-import com.typewritermc.basic.entries.dialogue.KukeUiDialogueState
 import com.typewritermc.basic.entries.dialogue.Option
 import com.typewritermc.basic.entries.dialogue.OptionContextKeys
 import com.typewritermc.basic.entries.dialogue.OptionDialogueEntry
-import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
 import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.core.utils.around
@@ -198,15 +196,15 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
         val optionsShowingDuration = Duration.ofMillis(usableOptions.size * delayOptionShow.toLong())
         KukeUiDialogueBridge.update(
             player,
-            KukeUiDialogueState(
-                sessionId = kukeUiDialogueSessionId(player, entry.id),
+            KukeUiDialogueBridge.baseState(
+                player = player,
+                entry = entry,
                 kind = "option",
                 speakerName = speakerDisplayName,
                 text = parsedText,
                 typingMillis = typingDuration.toKukeUiMillis(),
                 waitMillis = optionsShowingDuration.toKukeUiMillis(),
                 canFinish = false,
-                showAvatar = true,
                 selectedIndex = selectedIndex,
                 options = usableOptions.mapIndexed { index, option ->
                     KukeUiDialogueOption(

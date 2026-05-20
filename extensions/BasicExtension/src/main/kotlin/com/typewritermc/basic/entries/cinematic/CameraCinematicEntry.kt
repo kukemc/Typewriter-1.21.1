@@ -145,9 +145,10 @@ class CameraCinematicAction(
     private var boundStateSubscription: InteractionBoundStateOverrideSubscription? = null
 
     private var lastFrame: Int = 0
+    private var lastKukeUiFrame: Int = Int.MIN_VALUE
 
     override suspend fun setup() {
-        KukeUiDialogueBridge.cameraStart(player, entry.id)
+        KukeUiDialogueBridge.cameraStart(player, entry.id, entry.name, entry.segments.maxOfOrNull { it.endFrame } ?: 0, entry.segments.size)
         action = if (player.isFloodgate) {
             val geyserConnection = player.geyserConnection
             if (geyserConnection != null) {
@@ -165,6 +166,16 @@ class CameraCinematicAction(
         super.tick(frame)
 
         val segment = (entry.segments activeSegmentAt frame)
+        if (frame == 0 || frame - lastKukeUiFrame >= 5 || segment != previousSegment) {
+            lastKukeUiFrame = frame
+            KukeUiDialogueBridge.cameraFrame(
+                player,
+                entry.id,
+                frame,
+                entry.segments.maxOfOrNull { it.endFrame } ?: 0,
+                entry.segments.indexOf(segment)
+            )
+        }
 
         if (segment != previousSegment) {
             if (previousSegment == null && segment != null) {

@@ -1,6 +1,8 @@
 package com.typewritermc.basic.entries.dialogue.messengers.input
 
 import com.typewritermc.basic.entries.dialogue.InputDialogueEntry
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
+import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.EntryContextKey
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.DialogueMessenger
@@ -87,17 +89,7 @@ class JavaInputDialogueDialogueMessenger<IntermediateType : Any, ContextType : A
         if (event.player.uniqueId != player.uniqueId) return
         event.isCancelled = true
         val message = event.message().plainText()
-        val result = parser(message)
-        if (result.isFailure) {
-            infoText = result.exceptionOrNull()?.message ?: "<red>Invalid input"
-            player.sendInputDialogue()
-            return
-        }
-
-        val value = result.getOrNull() ?: return
-        provided = value
-        context[entry, key] = contextConverter(value)
-        state = MessengerState.FINISHED
+        handleInput(message)
     }
 
     private val percentage: Double
@@ -117,7 +109,50 @@ class JavaInputDialogueDialogueMessenger<IntermediateType : Any, ContextType : A
             if (!shouldDisplay) return
         }
 
+        if (KukeUiDialogueBridge.hasMod(player)) {
+            sendKukeUiInputDialogue()
+            return
+        }
+
         player.sendInputDialogue()
+    }
+
+    private fun handleInput(message: String) {
+        val result = parser(message)
+        if (result.isFailure) {
+            infoText = result.exceptionOrNull()?.message ?: "<red>Invalid input"
+            if (KukeUiDialogueBridge.hasMod(player)) {
+                sendKukeUiInputDialogue()
+            } else {
+                player.sendInputDialogue()
+            }
+            return
+        }
+
+        val value = result.getOrNull() ?: return
+        provided = value
+        context[entry, key] = contextConverter(value)
+        state = MessengerState.FINISHED
+    }
+
+    private fun sendKukeUiInputDialogue() {
+        KukeUiDialogueBridge.update(
+            player,
+            KukeUiDialogueBridge.baseState(
+                player = player,
+                entry = entry,
+                kind = "input",
+                speakerName = speakerDisplayName,
+                text = text,
+                typingMillis = typingDuration.toKukeUiMillis(),
+                canFinish = false,
+                inputMode = key.toString().substringAfterLast('.').lowercase(),
+                inputHint = inputInfoText,
+                inputError = infoText.takeIf { it.startsWith("<red>") } ?: "",
+            ),
+            onContinue = {},
+            onInput = { handleInput(it) },
+        )
     }
 
     private fun Player.sendInputDialogue() {

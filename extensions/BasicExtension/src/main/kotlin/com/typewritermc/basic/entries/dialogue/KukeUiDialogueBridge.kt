@@ -27,6 +27,10 @@ data class KukeUiDialogueOption(
     val index: Int,
     val text: String,
     val selected: Boolean = false,
+    val disabled: Boolean = false,
+    val locked: Boolean = false,
+    val reason: String = "",
+    val tooltip: String = "",
 )
 
 data class KukeUiDialogueState(
@@ -53,6 +57,9 @@ data class KukeUiDialogueState(
     val inputMode: String = "none",
     val inputHint: String = "",
     val inputError: String = "",
+    val portraitKind: String = "none",
+    val portraitResourceLocation: String = "",
+    val portraitUrl: String = "",
 )
 
 object KukeUiDialogueBridge : Listener {
@@ -156,6 +163,7 @@ object KukeUiDialogueBridge : Listener {
         inputError: String = "",
         selectedIndex: Int = 0,
         options: List<KukeUiDialogueOption> = emptyList(),
+        showAvatar: Boolean = true,
     ): KukeUiDialogueState {
         val speaker = entry.speaker.get()
         val avatar = resolveAvatar(player, entry, speaker)
@@ -168,7 +176,7 @@ object KukeUiDialogueBridge : Listener {
             waitMillis = waitMillis,
             allowSkip = allowSkip,
             canFinish = canFinish,
-            showAvatar = speakerName.isNotBlank(),
+            showAvatar = showAvatar && speakerName.isNotBlank(),
             avatarKind = avatar.kind,
             avatarUrl = avatar.url,
             avatarTexture = avatar.texture,
@@ -183,6 +191,9 @@ object KukeUiDialogueBridge : Listener {
             inputMode = inputMode,
             inputHint = inputHint,
             inputError = inputError,
+            portraitKind = avatar.kind,
+            portraitResourceLocation = avatar.resourceLocation,
+            portraitUrl = avatar.url,
         )
     }
 
@@ -298,9 +309,43 @@ object KukeUiDialogueBridge : Listener {
     }.getOrDefault("")
 
     private fun resolveAvatar(player: Player, entry: DialogueEntry, speaker: Any?): AvatarMeta {
-        val skin = resolveSkinFrom(speaker, player)
+        val portrait = resolvePortraitFrom(entry, player) ?: resolvePortraitFrom(speaker, player)
+        if (portrait != null) return portrait
+
+        val skin = resolveSkinFrom(speaker, player) ?: resolveSkinFrom(entry, player) ?: resolveSkinFrom(resolveDefinition(speaker), player)
         if (skin != null && skin.texture.isNotBlank()) return AvatarMeta("skin_texture", texture = skin.texture, signature = skin.signature)
-        return AvatarMeta("initial")
+        return AvatarMeta("none")
+    }
+
+    private fun resolvePortraitFrom(target: Any?, player: Player): AvatarMeta? {
+        if (target == null) return null
+        val resourceLocation = firstTextValue(target, player, "portraitResourceLocation", "avatarResourceLocation", "resourceLocation")
+        if (resourceLocation.isNotBlank()) return AvatarMeta("resource_location", resourceLocation = resourceLocation)
+
+        val url = firstTextValue(target, player, "portraitUrl", "avatarUrl", "url")
+        if (url.isNotBlank()) return AvatarMeta("url", url = url)
+
+        val portrait = firstValue(target, player, "portrait", "avatar") ?: return null
+        return avatarMetaFrom(portrait, player)
+    }
+
+    private fun avatarMetaFrom(value: Any?, player: Player): AvatarMeta? {
+        val resolved = resolveVar(value, player) ?: return null
+        if (resolved is String) return avatarMetaFromText(resolved)
+        val resourceLocation = firstTextValue(resolved, player, "resourceLocation", "location", "key")
+        if (resourceLocation.isNotBlank()) return AvatarMeta("resource_location", resourceLocation = resourceLocation)
+        val url = firstTextValue(resolved, player, "url", "uri")
+        if (url.isNotBlank()) return AvatarMeta("url", url = url)
+        val texture = textValue(resolved, "texture")
+        if (texture.isNotBlank()) return AvatarMeta("skin_texture", texture = texture, signature = textValue(resolved, "signature"))
+        return avatarMetaFromText(resolved.toString())
+    }
+
+    private fun avatarMetaFromText(value: String): AvatarMeta? {
+        val text = value.trim()
+        if (text.isBlank()) return null
+        if (text.startsWith("http://") || text.startsWith("https://")) return AvatarMeta("url", url = text)
+        return AvatarMeta("resource_location", resourceLocation = text)
     }
 
     private fun resolveSkinFrom(target: Any?, player: Player): SkinMeta? = runCatching {
@@ -313,6 +358,57 @@ object KukeUiDialogueBridge : Listener {
         val signature = skin?.javaClass?.methods?.firstOrNull { it.name == "getSignature" }?.invoke(skin) as? String ?: ""
         SkinMeta(texture, signature)
     }.getOrNull()
+
+    private fun resolveDefinition(target: Any?): Any? = runCatching {
+        if (target == null) return@runCatching null
+        val definition = target.javaClass.methods.firstOrNull { it.name == "getDefinition" && it.parameterTypes.isEmpty() }
+            ?.invoke(target) ?: return@runCatching null
+        definition.javaClass.methods.firstOrNull { it.name == "get" && it.parameterTypes.isEmpty() }?.invoke(definition)
+    }.getOrNull()
+
+    private fun firstTextValue(target: Any, player: Player, vararg names: String): String =
+        names.firstNotNullOfOrNull { name -> firstValue(target, player, name)?.let { value -> textFrom(value, player) } }
+            ?.trim()
+            .orEmpty()
+
+    private fun firstValue(target: Any, player: Player, vararg names: String): Any? =
+        names.firstNotNullOfOrNull { name -> valueFromProperty(target, name)?.let { resolveVar(it, player) } }
+
+    private fun valueFromProperty(target: Any, name: String): Any? = runCatching {
+        val getterName = "get" + name.replaceFirstChar { it.uppercase() }
+        target.javaClass.methods.firstOrNull { it.name == getterName && it.parameterTypes.isEmpty() }?.invoke(target)
+            ?: target.javaClass.fields.firstOrNull { it.name == name }?.get(target)
+    }.getOrNull()
+
+    private fun resolveVar(value: Any?, player: Player): Any? = runCatching {
+        if (value == null) return@runCatching null
+        val get = value.javaClass.methods.firstOrNull { it.name == "get" && it.parameterTypes.size in 1..2 }
+        if (get != null) {
+            return@runCatching if (get.parameterTypes.size == 2) {
+                get.invoke(value, player, player.interactionContext ?: context())
+            } else {
+                get.invoke(value, player)
+            }
+        }
+        value.javaClass.methods.firstOrNull { it.name == "get" && it.parameterTypes.isEmpty() }?.invoke(value) ?: value
+    }.getOrNull()
+
+    private fun textFrom(value: Any?, player: Player): String {
+        val resolved = resolveVar(value, player) ?: return ""
+        return when (resolved) {
+            is String -> resolved
+            is java.net.URI -> resolved.toString()
+            is java.net.URL -> resolved.toString()
+            else -> resolved.toString()
+        }
+    }
+
+    private fun textValue(target: Any, name: String): String = runCatching {
+        val getterName = "get" + name.replaceFirstChar { it.uppercase() }
+        target.javaClass.methods.firstOrNull { it.name == getterName && it.parameterTypes.isEmpty() }?.invoke(target) as? String
+            ?: target.javaClass.fields.firstOrNull { it.name == name }?.get(target) as? String
+            ?: ""
+    }.getOrDefault("")
 
     private fun resolveSpeakerId(speaker: Any?): String = runCatching {
         speaker?.javaClass?.methods?.firstOrNull { it.name == "getId" && it.parameterTypes.isEmpty() }
@@ -355,8 +451,9 @@ object KukeUiDialogueBridge : Listener {
         writeSafeUTF(state.avatarTexture)
         writeSafeUTF(state.avatarSignature)
         writeInt(state.selectedIndex)
-        writeInt(state.options.size.coerceIn(0, MAX_OPTIONS))
-        state.options.take(MAX_OPTIONS).forEach { option ->
+        val options = state.options.take(MAX_OPTIONS)
+        writeInt(options.size)
+        options.forEach { option ->
             writeInt(option.index)
             writeSafeUTF(option.text)
             writeBoolean(option.selected)
@@ -369,6 +466,17 @@ object KukeUiDialogueBridge : Listener {
         writeSafeUTF(state.inputMode)
         writeSafeUTF(state.inputHint)
         writeSafeUTF(state.inputError)
+        writeInt(options.size)
+        options.forEach { option ->
+            writeInt(option.index)
+            writeBoolean(option.disabled)
+            writeBoolean(option.locked)
+            writeSafeUTF(option.reason)
+            writeSafeUTF(option.tooltip)
+        }
+        writeSafeUTF(state.portraitKind)
+        writeSafeUTF(state.portraitResourceLocation)
+        writeSafeUTF(state.portraitUrl)
     }
 
     private fun DataOutputStream.writeSafeUTF(value: String) {
@@ -395,6 +503,7 @@ object KukeUiDialogueBridge : Listener {
     private data class AvatarMeta(
         val kind: String,
         val url: String = "",
+        val resourceLocation: String = "",
         val texture: String = "",
         val signature: String = "",
     )

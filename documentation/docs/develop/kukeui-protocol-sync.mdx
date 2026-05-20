@@ -1,0 +1,87 @@
+# KukeUI integration protocol
+
+This page documents the real KukeUI bridge currently used by Typewriter's BasicExtension.
+It is a developer-facing protocol reference, not player-facing story content.
+
+## Transport
+
+Packets use KukeUI's `kukeui:main` channel with the shared binary frame:
+
+```text
+[UTF namespace][UTF action][remaining bytes payload]
+```
+
+Typewriter registers and uses namespace `typewriter` through the KukeUI facade when available.
+
+## Typewriter to KukeUI
+
+| Action | Payload | Result |
+|---|---|---|
+| `dialogue_update` | Binary dialogue state | Opens or refreshes the KukeUI dialogue screen. |
+| `dialogue_clear` | `UTF sessionId` | Clears the matching dialogue and closes the screen locally. |
+| `camera_start` | `UTF cinematicId`, `UTF cinematicName`, `int totalFrames`, `int segmentCount` | Enables KukeUI cinematic mode and mask overlay. |
+| `camera_frame` | `UTF cinematicId`, `int frame`, `int totalFrames`, `int segmentIndex` | Updates camera counters for internal state. |
+| `camera_stop` | `UTF cinematicId` | Restores the previous GUI visibility state. |
+
+The dialogue state is written in this order:
+
+```text
+UTF sessionId
+UTF kind
+UTF speakerName
+UTF text
+int typingMillis
+int waitMillis
+boolean allowSkip
+boolean canFinish
+boolean showAvatar
+UTF avatarKind
+UTF avatarUrl
+UTF avatarTexture
+UTF avatarSignature
+int selectedIndex
+int optionCount
+  repeat optionCount:
+    int index
+    UTF text
+    boolean selected
+UTF entryId
+UTF entryName
+UTF speakerId
+UTF speakerType
+UTF soundKey
+UTF inputMode
+UTF inputHint
+UTF inputError
+int optionMetadataCount
+  repeat optionMetadataCount:
+    int optionIndex
+    boolean disabled
+    boolean locked
+    UTF reason
+    UTF tooltip
+UTF portraitKind
+UTF portraitResourceLocation
+UTF portraitUrl
+```
+
+`avatarKind`/`portraitKind` values currently produced by the bridge are `none`, `resource_location`, `url`, and `skin_texture`.
+UTF strings are capped before writing so they fit Java modified UTF limits.
+
+## KukeUI to Typewriter
+
+| Action | Payload | Typewriter callback |
+|---|---|---|
+| `dialogue_continue` | `UTF sessionId` | Continue/advance current session. |
+| `dialogue_select` | `UTF sessionId`, `int selectedIndex` | Select an option by original Typewriter option index. |
+| `dialogue_input` | `UTF sessionId`, `UTF value` | Submit input text. |
+| `dialogue_close` | `UTF sessionId` | Remove session and force-next the interaction. |
+
+Packets with mismatched session ids are ignored.
+
+## KukeUI UI behavior notes
+
+- Spoken, option, timed, input, message, and actionbar dialogue kinds are supported by the client UI.
+- Options may be disabled/locked and may carry reason/tooltip metadata.
+- The cinematic overlay deliberately renders only visual masking. It does not display progress, frame counts, labels, or auto-continue prompts.
+- KukeUI may close non-chat screens when camera mode starts so the route remains visible.

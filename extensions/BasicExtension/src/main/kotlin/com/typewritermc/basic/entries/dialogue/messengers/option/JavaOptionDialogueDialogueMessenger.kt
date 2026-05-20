@@ -74,9 +74,12 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
             // 1-based index
             this.context[entry, OptionContextKeys.SELECTED_OPTION] = value + 1
         }
-    private val selected get() = usableOptions.getOrNull(selectedIndex)
+    private val selected get() = selectedKukeUiOption ?: usableOptions.getOrNull(selectedIndex)
 
     private var usableOptions: List<Option> = emptyList()
+    private var optionStates: List<OptionState> = emptyList()
+    private var selectedKukeUiIndex = 0
+    private var selectedKukeUiOption: Option? = null
     private var speakerDisplayName = ""
     private var parsedText = ""
     private var playTime = Duration.ZERO
@@ -98,8 +101,7 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
         }
 
     override fun init() {
-        usableOptions =
-            entry.options.filter { it.criteria.matches(player, context) }
+        refreshOptions()
 
         speakerDisplayName = entry.speakerDisplayName.get(player).parsePlaceholders(player)
         parsedText = entry.text.get(player).parsePlaceholders(player)
@@ -115,6 +117,7 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
         }
         // Set the index here so we ensure that the context value is written into the context.
         selectedIndex = 0
+        selectedKukeUiIndex = firstUsableOptionStateIndex()
     }
 
     @EventHandler
@@ -139,12 +142,12 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
 
         var forceSend = false
 
-        val newOptions =
-            entry.options.filter { it.criteria.matches(player, this.context) }
+        val newOptions = entry.options.filter { it.criteria.matches(player, this.context) }
 
         if (newOptions != usableOptions) {
-            usableOptions = newOptions
+            refreshOptions()
             selectedIndex = 0
+            selectedKukeUiIndex = firstUsableOptionStateIndex()
             forceSend = true
         }
 
@@ -205,25 +208,51 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
                 typingMillis = typingDuration.toKukeUiMillis(),
                 waitMillis = optionsShowingDuration.toKukeUiMillis(),
                 canFinish = false,
-                selectedIndex = selectedIndex,
-                options = usableOptions.mapIndexed { index, option ->
+                selectedIndex = selectedKukeUiIndex,
+                options = optionStates.mapIndexed { index, state ->
                     KukeUiDialogueOption(
                         index = index,
-                        text = option.text.get(player).parsePlaceholders(player),
-                        selected = index == selectedIndex,
+                        text = state.option.text.get(player).parsePlaceholders(player),
+                        selected = index == selectedKukeUiIndex,
+                        disabled = !state.usable,
+                        locked = !state.usable,
+                        reason = state.reason,
+                        tooltip = state.tooltip,
                     )
                 },
             ),
             onContinue = { completeOrFinish() },
-            onSelect = { index ->
-                if (index in usableOptions.indices) {
-                    selectedIndex = index
-                    animationComplete = true
-                    state = MessengerState.FINISHED
-                }
-            },
+            onSelect = ::selectKukeUiOption,
         )
     }
+
+    private fun selectKukeUiOption(index: Int) {
+        val optionState = optionStates.getOrNull(index) ?: return
+        if (!optionState.usable || !optionState.option.criteria.matches(player, context)) {
+            refreshOptions()
+            selectedKukeUiIndex = firstUsableOptionStateIndex()
+            displayMessage(playTime)
+            return
+        }
+        val usableIndex = usableOptions.indexOf(optionState.option)
+        if (usableIndex < 0) return
+        selectedIndex = usableIndex
+        selectedKukeUiIndex = index
+        selectedKukeUiOption = optionState.option
+        animationComplete = true
+        state = MessengerState.FINISHED
+    }
+
+    private fun refreshOptions() {
+        optionStates = entry.options.map { option ->
+            val usable = option.criteria.matches(player, context)
+            OptionState(option, usable)
+        }
+        usableOptions = optionStates.filter { it.usable }.map { it.option }
+        selectedKukeUiOption = null
+    }
+
+    private fun firstUsableOptionStateIndex(): Int = optionStates.indexOfFirst { it.usable }.takeIf { it >= 0 } ?: 0
 
     private fun formatOptions(rawText: String): Component {
         val around = usableOptions.around(selectedIndex, 1, 2)
@@ -268,4 +297,11 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
         confirmationKeyHandler?.dispose()
         confirmationKeyHandler = null
     }
+
+    private data class OptionState(
+        val option: Option,
+        val usable: Boolean,
+        val reason: String = "",
+        val tooltip: String = reason,
+    )
 }

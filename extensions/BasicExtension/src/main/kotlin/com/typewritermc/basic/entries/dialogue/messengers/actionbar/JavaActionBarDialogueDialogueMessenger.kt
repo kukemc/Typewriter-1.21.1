@@ -1,6 +1,9 @@
 package com.typewritermc.basic.entries.dialogue.messengers.actionbar
 
 import com.typewritermc.basic.entries.dialogue.ActionBarDialogueEntry
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
+import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
+import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.*
 import com.typewritermc.engine.paper.extensions.placeholderapi.parsePlaceholders
@@ -60,6 +63,10 @@ class JavaActionBarDialogueDialogueMessenger(
         val rawText = text.stripped()
         val percentage = typingDurationType.calculatePercentage(playTime, entry.duration.get(player), rawText)
 
+        if (KukeUiDialogueBridge.hasMod(player) && sendKukeUiDialogue()) {
+            return
+        }
+
         // After the message is finished typing, we don't need to send it as often anymore.
         if (percentage > 1.1 && playTime.toTicks() % 40 > 0) {
             return
@@ -84,12 +91,29 @@ class JavaActionBarDialogueDialogueMessenger(
         player.sendActionBar(component)
     }
 
+    private fun sendKukeUiDialogue(): Boolean =
+        KukeUiDialogueBridge.update(
+            player,
+            KukeUiDialogueBridge.baseState(
+                player = player,
+                entry = entry,
+                kind = "actionbar",
+                speakerName = speakerDisplayName,
+                text = text,
+                typingMillis = typingDuration.toKukeUiMillis(),
+                canFinish = eventTriggers.isEmpty(),
+                showAvatar = false,
+            ),
+            onContinue = { completeOrFinish() },
+        )
+
     override fun end() {
         // Do nothing as we don't need to resend the messages.
     }
 
     override fun dispose() {
         super.dispose()
+        KukeUiDialogueBridge.clear(player, kukeUiDialogueSessionId(player, entry.id))
         val component = Component.empty()
         player.acceptActionBarMessage(component)
         player.sendActionBar(component)

@@ -1,5 +1,6 @@
 package com.typewritermc.basic.entries.dialogue.messengers.message
 
+import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
 import com.typewritermc.basic.entries.dialogue.MessageDialogueEntry
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.DialogueMessenger
@@ -28,19 +29,37 @@ class UniversalMessageDialogueDialogueMessenger(
     entry: MessageDialogueEntry
 ) :
     DialogueMessenger<MessageDialogueEntry>(player, context, entry) {
+    private var sentKukeUiDialogue = false
 
     override fun tick(context: TickContext) {
         super.tick(context)
         if (state != MessengerState.RUNNING) return
+        sentKukeUiDialogue = KukeUiDialogueBridge.hasMod(player) && sendKukeUiDialogue()
         state = MessengerState.FINISHED
     }
 
     override fun end() {
         super.end()
+        if (sentKukeUiDialogue) return
         // We want to send the message after the dialogue has ended.
         // Because then it won't be caught twice by the ChatHistory.
         player.sendMessageDialogue(entry.text.get(player), entry.speakerDisplayName.get(player))
     }
+
+    private fun sendKukeUiDialogue(): Boolean =
+        KukeUiDialogueBridge.update(
+            player,
+            KukeUiDialogueBridge.baseState(
+                player = player,
+                entry = entry,
+                kind = "message",
+                speakerName = entry.speakerDisplayName.get(player).parsePlaceholders(player),
+                text = entry.text.get(player).parsePlaceholders(player),
+                typingMillis = 0,
+                canFinish = true,
+            ),
+            onContinue = { state = MessengerState.FINISHED },
+        )
 }
 
 fun Player.sendMessageDialogue(text: String, speakerDisplayName: String) {

@@ -2,6 +2,7 @@ package com.typewritermc.basic.entries.dialogue.messengers.input
 
 import com.typewritermc.basic.entries.dialogue.InputDialogueEntry
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
+import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
 import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.EntryContextKey
 import com.typewritermc.core.interaction.InteractionContext
@@ -109,8 +110,7 @@ class JavaInputDialogueDialogueMessenger<IntermediateType : Any, ContextType : A
             if (!shouldDisplay) return
         }
 
-        if (KukeUiDialogueBridge.hasMod(player)) {
-            sendKukeUiInputDialogue()
+        if (KukeUiDialogueBridge.hasMod(player) && sendKukeUiInputDialogue()) {
             return
         }
 
@@ -121,9 +121,7 @@ class JavaInputDialogueDialogueMessenger<IntermediateType : Any, ContextType : A
         val result = parser(message)
         if (result.isFailure) {
             infoText = result.exceptionOrNull()?.message ?: "<red>Invalid input"
-            if (KukeUiDialogueBridge.hasMod(player)) {
-                sendKukeUiInputDialogue()
-            } else {
+            if (!KukeUiDialogueBridge.hasMod(player) || !sendKukeUiInputDialogue()) {
                 player.sendInputDialogue()
             }
             return
@@ -135,7 +133,7 @@ class JavaInputDialogueDialogueMessenger<IntermediateType : Any, ContextType : A
         state = MessengerState.FINISHED
     }
 
-    private fun sendKukeUiInputDialogue() {
+    private fun sendKukeUiInputDialogue(): Boolean =
         KukeUiDialogueBridge.update(
             player,
             KukeUiDialogueBridge.baseState(
@@ -153,6 +151,10 @@ class JavaInputDialogueDialogueMessenger<IntermediateType : Any, ContextType : A
             onContinue = {},
             onInput = { handleInput(it) },
         )
+
+    override fun dispose() {
+        super.dispose()
+        KukeUiDialogueBridge.clear(player, kukeUiDialogueSessionId(player, entry.id))
     }
 
     private fun Player.sendInputDialogue() {

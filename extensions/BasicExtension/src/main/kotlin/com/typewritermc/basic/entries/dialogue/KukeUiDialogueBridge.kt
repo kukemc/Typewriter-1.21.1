@@ -8,15 +8,20 @@ import com.typewritermc.engine.paper.interaction.interactionContext
 import com.typewritermc.engine.paper.plugin
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
-import org.bukkit.event.EventHandler
+import org.bukkit.event.Event
+import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.lang.reflect.Method
 import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+private const val MAX_OPTIONS = 32
+private const val MAX_UTF_BYTES = 60_000
 
 data class KukeUiDialogueOption(
     val index: Int,
@@ -56,23 +61,30 @@ object KukeUiDialogueBridge : Listener {
     private const val KUKEUI_PACKET_EVENT = "kuke.kukeui.event.UIPacketEvent"
     private val sessions = ConcurrentHashMap<UUID, Session>()
     private var registered = false
+    private var kukeUiClass: Class<*>? = null
+    private var hasModMethod: Method? = null
+    private var sendMethod: Method? = null
+    private var sendRawMethod: Method? = null
 
+    @Synchronized
     fun ensureRegistered() {
         if (registered) return
         registered = true
-        Bukkit.getPluginManager().registerEvents(this, plugin)
+        val kukeUi = loadKukeUiClass() ?: return
         runCatching {
-            val kukeUi = Class.forName(KUKEUI_FACADE)
             kukeUi.getMethod("register", String::class.java, org.bukkit.plugin.Plugin::class.java)
                 .invoke(null, NAMESPACE, plugin)
         }
+        registerPacketListener()
     }
 
     fun hasMod(player: Player): Boolean {
         ensureRegistered()
         return runCatching {
-            val kukeUi = Class.forName(KUKEUI_FACADE)
-            kukeUi.getMethod("hasMod", Player::class.java).invoke(null, player) as? Boolean ?: false
+            val method = hasModMethod ?: loadKukeUiClass()?.getMethod("hasMod", Player::class.java)?.also {
+                hasModMethod = it
+            } ?: return false
+            method.invoke(null, player) as? Boolean ?: false
         }.getOrDefault(false)
     }
 
@@ -82,24 +94,33 @@ object KukeUiDialogueBridge : Listener {
         onContinue: () -> Unit,
         onSelect: (Int) -> Unit = {},
         onInput: (String) -> Unit = {},
-    ) {
+    ): Boolean {
         ensureRegistered()
-        if (!hasMod(player)) return
-        sessions[player.uniqueId] = Session(state.sessionId, onContinue, onSelect, onInput)
-        send(player, "dialogue_update") { output -> output.writeDialogueState(state) }
+        if (!hasMod(player)) return false
+        val sent = send(player, "dialogue_update") { output -> output.writeDialogueState(state) }
+        if (sent) {
+            sessions[player.uniqueId] = Session(state.sessionId, onContinue, onSelect, onInput)
+        }
+        return sent
     }
 
     fun clear(player: Player, sessionId: String) {
-        if (!hasMod(player)) return
         sessions.remove(player.uniqueId)
-        send(player, "dialogue_clear") { output -> output.writeUTF(sessionId) }
+        if (!hasMod(player)) return
+        send(player, "dialogue_clear") { output -> output.writeSafeUTF(sessionId) }
     }
 
-    fun cameraStart(player: Player, cinematicId: String = "", cinematicName: String = "", totalFrames: Int = 0, segmentCount: Int = 0) {
+    fun cameraStart(
+        player: Player,
+        cinematicId: String = "",
+        cinematicName: String = "",
+        totalFrames: Int = 0,
+        segmentCount: Int = 0,
+    ) {
         if (!hasMod(player)) return
         send(player, "camera_start") { output ->
-            output.writeUTF(cinematicId)
-            output.writeUTF(cinematicName)
+            output.writeSafeUTF(cinematicId)
+            output.writeSafeUTF(cinematicName)
             output.writeInt(totalFrames.coerceAtLeast(0))
             output.writeInt(segmentCount.coerceAtLeast(0))
         }
@@ -108,7 +129,7 @@ object KukeUiDialogueBridge : Listener {
     fun cameraFrame(player: Player, cinematicId: String = "", frame: Int = 0, totalFrames: Int = 0, segmentIndex: Int = -1) {
         if (!hasMod(player)) return
         send(player, "camera_frame") { output ->
-            output.writeUTF(cinematicId)
+            output.writeSafeUTF(cinematicId)
             output.writeInt(frame.coerceAtLeast(0))
             output.writeInt(totalFrames.coerceAtLeast(0))
             output.writeInt(segmentIndex)
@@ -117,7 +138,7 @@ object KukeUiDialogueBridge : Listener {
 
     fun cameraStop(player: Player, cinematicId: String = "") {
         if (!hasMod(player)) return
-        send(player, "camera_stop") { output -> output.writeUTF(cinematicId) }
+        send(player, "camera_stop") { output -> output.writeSafeUTF(cinematicId) }
     }
 
     fun baseState(
@@ -147,16 +168,16 @@ object KukeUiDialogueBridge : Listener {
             waitMillis = waitMillis,
             allowSkip = allowSkip,
             canFinish = canFinish,
-            showAvatar = true,
+            showAvatar = speakerName.isNotBlank(),
             avatarKind = avatar.kind,
             avatarUrl = avatar.url,
             avatarTexture = avatar.texture,
             avatarSignature = avatar.signature,
             selectedIndex = selectedIndex,
-            options = options,
+            options = options.take(MAX_OPTIONS),
             entryId = entry.id,
             entryName = entry.name,
-            speakerId = speaker?.javaClass?.methods?.firstOrNull { it.name == "getId" }?.invoke(speaker) as? String ?: "",
+            speakerId = resolveSpeakerId(speaker),
             speakerType = speaker?.javaClass?.simpleName ?: "",
             soundKey = resolveSoundKey(player, entry),
             inputMode = inputMode,
@@ -165,8 +186,22 @@ object KukeUiDialogueBridge : Listener {
         )
     }
 
-    @EventHandler
-    fun onPacket(event: org.bukkit.event.Event) {
+    private fun registerPacketListener() {
+        runCatching {
+            @Suppress("UNCHECKED_CAST")
+            val eventClass = loadKukeUiEventClass() as? Class<out Event> ?: return@runCatching
+            Bukkit.getPluginManager().registerEvent(
+                eventClass,
+                this,
+                EventPriority.NORMAL,
+                { _, event -> handlePacket(event) },
+                plugin,
+                false,
+            )
+        }
+    }
+
+    private fun handlePacket(event: Event) {
         if (!isKukeUiPacketEvent(event)) return
         val namespace = event.callString("getNamespace") ?: return
         if (namespace != NAMESPACE) return
@@ -174,6 +209,14 @@ object KukeUiDialogueBridge : Listener {
         val session = sessions[player.uniqueId] ?: return
         val action = event.callString("getAction") ?: return
         val payload = event.callByteArray("getPayload") ?: return
+        runOnMainThread {
+            runCatching {
+                handlePacketPayload(player, session, action, payload)
+            }
+        }
+    }
+
+    private fun handlePacketPayload(player: Player, session: Session, action: String, payload: ByteArray) {
         val input = DataInputStream(ByteArrayInputStream(payload))
         when (action) {
             "dialogue_continue" -> {
@@ -203,39 +246,49 @@ object KukeUiDialogueBridge : Listener {
         }
     }
 
-    private fun send(player: Player, action: String, writer: (DataOutputStream) -> Unit) {
+    private fun send(player: Player, action: String, writer: (DataOutputStream) -> Unit): Boolean =
         runCatching {
-            val kukeUi = Class.forName(KUKEUI_FACADE)
-            val sendMethod = kukeUi.methods.firstOrNull { method ->
-                method.name == "send" &&
-                    method.parameterTypes.size == 4 &&
-                    method.parameterTypes[0] == Player::class.java &&
-                    method.parameterTypes[1] == String::class.java &&
-                    method.parameterTypes[2] == String::class.java
-            } ?: return@runCatching
-            val payloadWriterType = sendMethod.parameterTypes[3]
-            val payloadWriter = java.lang.reflect.Proxy.newProxyInstance(
-                payloadWriterType.classLoader,
-                arrayOf(payloadWriterType),
-            ) { _, method, args ->
-                if (method.name == "write") {
-                    writer(args?.firstOrNull() as DataOutputStream)
-                }
-                null
-            }
-            sendMethod.invoke(null, player, NAMESPACE, action, payloadWriter)
-        }.recoverCatching {
-            val kukeUiPlugin = Bukkit.getPluginManager().getPlugin("KukeUI") ?: return@recoverCatching
-            val sendRaw = kukeUiPlugin.javaClass.methods.firstOrNull { method ->
-                method.name == "sendRaw" && method.parameterTypes.contentEquals(
-                    arrayOf(Player::class.java, String::class.java, String::class.java, ByteArray::class.java),
-                )
-            } ?: return@recoverCatching
             val buffer = ByteArrayOutputStream()
             DataOutputStream(buffer).use(writer)
-            sendRaw.invoke(kukeUiPlugin, player, NAMESPACE, action, buffer.toByteArray())
+            val payload = buffer.toByteArray()
+            sendViaFacade(player, action, payload) || sendViaPlugin(player, action, payload)
+        }.getOrDefault(false)
+
+    private fun sendViaFacade(player: Player, action: String, payload: ByteArray): Boolean = runCatching {
+        val method = sendMethod ?: loadKukeUiClass()?.methods?.firstOrNull { method ->
+            method.name == "send" &&
+                method.parameterTypes.size == 4 &&
+                method.parameterTypes[0] == Player::class.java &&
+                method.parameterTypes[1] == String::class.java &&
+                method.parameterTypes[2] == String::class.java &&
+                method.parameterTypes[3].isInterface
+        }?.also { sendMethod = it } ?: return false
+        val payloadWriterType = method.parameterTypes[3]
+        var wrote = false
+        val payloadWriter = java.lang.reflect.Proxy.newProxyInstance(
+            payloadWriterType.classLoader,
+            arrayOf(payloadWriterType),
+        ) { _, proxyMethod, args ->
+            if ((proxyMethod.name == "write" || proxyMethod.name == "accept") && args?.firstOrNull() is DataOutputStream) {
+                (args.first() as DataOutputStream).write(payload)
+                wrote = true
+            }
+            null
         }
-    }
+        method.invoke(null, player, NAMESPACE, action, payloadWriter)
+        wrote
+    }.getOrDefault(false)
+
+    private fun sendViaPlugin(player: Player, action: String, payload: ByteArray): Boolean = runCatching {
+        val kukeUiPlugin = Bukkit.getPluginManager().getPlugin("KukeUI") ?: return false
+        val method = sendRawMethod ?: kukeUiPlugin.javaClass.methods.firstOrNull { method ->
+            method.name == "sendRaw" && method.parameterTypes.contentEquals(
+                arrayOf(Player::class.java, String::class.java, String::class.java, ByteArray::class.java),
+            )
+        }?.also { sendRawMethod = it } ?: return false
+        method.invoke(kukeUiPlugin, player, NAMESPACE, action, payload)
+        true
+    }.getOrDefault(false)
 
     private fun resolveSoundKey(player: Player, entry: DialogueEntry): String = runCatching {
         val sound = entry.speaker.get()?.sound?.get(player, player.interactionContext ?: context()) ?: return@runCatching ""
@@ -261,44 +314,75 @@ object KukeUiDialogueBridge : Listener {
         SkinMeta(texture, signature)
     }.getOrNull()
 
-    private fun isKukeUiPacketEvent(event: org.bukkit.event.Event): Boolean =
-        runCatching { Class.forName(KUKEUI_PACKET_EVENT).isInstance(event) }.getOrDefault(false)
+    private fun resolveSpeakerId(speaker: Any?): String = runCatching {
+        speaker?.javaClass?.methods?.firstOrNull { it.name == "getId" && it.parameterTypes.isEmpty() }
+            ?.invoke(speaker) as? String ?: ""
+    }.getOrDefault("")
+
+    private fun loadKukeUiClass(): Class<*>? = kukeUiClass ?: runCatching {
+        val loader = Bukkit.getPluginManager().getPlugin("KukeUI")?.javaClass?.classLoader ?: javaClass.classLoader
+        Class.forName(KUKEUI_FACADE, false, loader)
+    }.getOrNull()?.also { kukeUiClass = it }
+
+    private fun loadKukeUiEventClass(): Class<*>? = runCatching {
+        val loader = Bukkit.getPluginManager().getPlugin("KukeUI")?.javaClass?.classLoader ?: javaClass.classLoader
+        Class.forName(KUKEUI_PACKET_EVENT, false, loader)
+    }.getOrNull()
+
+    private fun isKukeUiPacketEvent(event: Event): Boolean =
+        runCatching { loadKukeUiEventClass()?.isInstance(event) == true }.getOrDefault(false)
+
+    private fun runOnMainThread(task: () -> Unit) {
+        if (Bukkit.isPrimaryThread()) {
+            task()
+        } else {
+            Bukkit.getScheduler().runTask(plugin, Runnable(task))
+        }
+    }
 
     private fun DataOutputStream.writeDialogueState(state: KukeUiDialogueState) {
-        writeUTF(state.sessionId)
-        writeUTF(state.kind)
-        writeUTF(state.speakerName)
-        writeUTF(state.text)
+        writeSafeUTF(state.sessionId)
+        writeSafeUTF(state.kind)
+        writeSafeUTF(state.speakerName)
+        writeSafeUTF(state.text)
         writeInt(state.typingMillis)
         writeInt(state.waitMillis)
         writeBoolean(state.allowSkip)
         writeBoolean(state.canFinish)
         writeBoolean(state.showAvatar)
-        writeUTF(state.avatarKind)
-        writeUTF(state.avatarUrl)
-        writeUTF(state.avatarTexture)
-        writeUTF(state.avatarSignature)
+        writeSafeUTF(state.avatarKind)
+        writeSafeUTF(state.avatarUrl)
+        writeSafeUTF(state.avatarTexture)
+        writeSafeUTF(state.avatarSignature)
         writeInt(state.selectedIndex)
-        writeInt(state.options.size)
-        state.options.forEach { option ->
+        writeInt(state.options.size.coerceIn(0, MAX_OPTIONS))
+        state.options.take(MAX_OPTIONS).forEach { option ->
             writeInt(option.index)
-            writeUTF(option.text)
+            writeSafeUTF(option.text)
             writeBoolean(option.selected)
         }
-        writeUTF(state.entryId)
-        writeUTF(state.entryName)
-        writeUTF(state.speakerId)
-        writeUTF(state.speakerType)
-        writeUTF(state.soundKey)
-        writeUTF(state.inputMode)
-        writeUTF(state.inputHint)
-        writeUTF(state.inputError)
+        writeSafeUTF(state.entryId)
+        writeSafeUTF(state.entryName)
+        writeSafeUTF(state.speakerId)
+        writeSafeUTF(state.speakerType)
+        writeSafeUTF(state.soundKey)
+        writeSafeUTF(state.inputMode)
+        writeSafeUTF(state.inputHint)
+        writeSafeUTF(state.inputError)
     }
 
-    private fun org.bukkit.event.Event.callString(method: String): String? = call(method) as? String
-    private fun org.bukkit.event.Event.callPlayer(method: String): Player? = call(method) as? Player
-    private fun org.bukkit.event.Event.callByteArray(method: String): ByteArray? = call(method) as? ByteArray
-    private fun org.bukkit.event.Event.call(method: String): Any? =
+    private fun DataOutputStream.writeSafeUTF(value: String) {
+        var text = value
+        while (text.toByteArray(Charsets.UTF_8).size > MAX_UTF_BYTES) {
+            text = text.dropLast((text.length / 4).coerceAtLeast(1))
+        }
+        writeUTF(text)
+    }
+
+    private fun Event.callString(method: String): String? = call(method) as? String
+    private fun Event.callPlayer(method: String): Player? = call(method) as? Player
+    private fun Event.callByteArray(method: String): ByteArray? = call(method) as? ByteArray
+    private fun Event.call(method: String): Any? =
         runCatching { javaClass.getMethod(method).invoke(this) }.getOrNull()
 
     private data class Session(

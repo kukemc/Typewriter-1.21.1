@@ -2,6 +2,7 @@ package com.typewritermc.basic.entries.dialogue.messengers.option
 
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueOption
+import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
 import com.typewritermc.basic.entries.dialogue.Option
 import com.typewritermc.basic.entries.dialogue.OptionContextKeys
 import com.typewritermc.basic.entries.dialogue.OptionDialogueEntry
@@ -163,8 +164,7 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
 
     private fun displayMessage(playTime: Duration) {
         val rawText = parsedText.stripped()
-        if (KukeUiDialogueBridge.hasMod(player)) {
-            sendKukeUiDialogue(rawText)
+        if (KukeUiDialogueBridge.hasMod(player) && sendKukeUiDialogue(rawText)) {
             return
         }
 
@@ -191,10 +191,10 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
         player.sendMessage(component)
     }
 
-    private fun sendKukeUiDialogue(rawText: String) {
+    private fun sendKukeUiDialogue(rawText: String): Boolean {
         val typingDuration = typingDurationType.totalDuration(rawText, typeDuration)
         val optionsShowingDuration = Duration.ofMillis(usableOptions.size * delayOptionShow.toLong())
-        KukeUiDialogueBridge.update(
+        return KukeUiDialogueBridge.update(
             player,
             KukeUiDialogueBridge.baseState(
                 player = player,
@@ -264,6 +264,7 @@ class JavaOptionDialogueDialogueMessenger(player: Player, context: InteractionCo
 
     override fun dispose() {
         super.dispose()
+        KukeUiDialogueBridge.clear(player, kukeUiDialogueSessionId(player, entry.id))
         confirmationKeyHandler?.dispose()
         confirmationKeyHandler = null
     }

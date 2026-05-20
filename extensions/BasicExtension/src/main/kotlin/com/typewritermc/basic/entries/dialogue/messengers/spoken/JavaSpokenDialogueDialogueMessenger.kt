@@ -2,6 +2,7 @@ package com.typewritermc.basic.entries.dialogue.messengers.spoken
 
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
 import com.typewritermc.basic.entries.dialogue.SpokenDialogueEntry
+import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
 import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.*
@@ -67,8 +68,7 @@ class JavaSpokenDialogueDialogueMessenger(player: Player, context: InteractionCo
     override fun tick(context: TickContext) {
         if (state != MessengerState.RUNNING) return
         playedTime += context.deltaTime
-        if (KukeUiDialogueBridge.hasMod(player)) {
-            sendKukeUiDialogue()
+        if (KukeUiDialogueBridge.hasMod(player) && sendKukeUiDialogue()) {
             return
         }
         player.sendSpokenDialogue(
@@ -80,7 +80,7 @@ class JavaSpokenDialogueDialogueMessenger(player: Player, context: InteractionCo
         )
     }
 
-    private fun sendKukeUiDialogue() {
+    private fun sendKukeUiDialogue(): Boolean =
         KukeUiDialogueBridge.update(
             player,
             KukeUiDialogueBridge.baseState(
@@ -94,10 +94,10 @@ class JavaSpokenDialogueDialogueMessenger(player: Player, context: InteractionCo
             ),
             onContinue = { completeOrFinish() },
         )
-    }
 
     override fun dispose() {
         super.dispose()
+        KukeUiDialogueBridge.clear(player, kukeUiDialogueSessionId(player, entry.id))
         confirmationKeyHandler?.dispose()
         confirmationKeyHandler = null
     }

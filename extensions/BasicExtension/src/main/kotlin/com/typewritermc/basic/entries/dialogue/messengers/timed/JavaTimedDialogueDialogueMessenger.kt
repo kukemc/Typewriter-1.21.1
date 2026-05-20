@@ -2,6 +2,7 @@ package com.typewritermc.basic.entries.dialogue.messengers.timed
 
 import com.typewritermc.basic.entries.dialogue.KukeUiDialogueBridge
 import com.typewritermc.basic.entries.dialogue.TimedDialogueEntry
+import com.typewritermc.basic.entries.dialogue.kukeUiDialogueSessionId
 import com.typewritermc.basic.entries.dialogue.toKukeUiMillis
 import com.typewritermc.core.interaction.InteractionContext
 import com.typewritermc.engine.paper.entry.dialogue.*
@@ -93,26 +94,7 @@ class JavaTimedDialogueDialogueMessenger(player: Player, context: InteractionCon
             return
         }
 
-        if (KukeUiDialogueBridge.hasMod(player)) {
-            KukeUiDialogueBridge.update(
-                player,
-                KukeUiDialogueBridge.baseState(
-                    player = player,
-                    entry = entry,
-                    kind = "timed",
-                    speakerName = speakerDisplayName,
-                    text = text,
-                    typingMillis = typingDuration.toKukeUiMillis(),
-                    waitMillis = waitDuration.toKukeUiMillis(),
-                    allowSkip = entry.allowSkip.get(player, this.context),
-                    canFinish = false,
-                ),
-                onContinue = {
-                    if (state != MessengerState.RUNNING) return@update
-                    if (!canSkip) return@update
-                    completeOrFinish()
-                },
-            )
+        if (KukeUiDialogueBridge.hasMod(player) && sendKukeUiDialogue()) {
             return
         }
 
@@ -127,8 +109,30 @@ class JavaTimedDialogueDialogueMessenger(player: Player, context: InteractionCon
         )
     }
 
+    private fun sendKukeUiDialogue(): Boolean =
+        KukeUiDialogueBridge.update(
+            player,
+            KukeUiDialogueBridge.baseState(
+                player = player,
+                entry = entry,
+                kind = "timed",
+                speakerName = speakerDisplayName,
+                text = text,
+                typingMillis = typingDuration.toKukeUiMillis(),
+                waitMillis = waitDuration.toKukeUiMillis(),
+                allowSkip = entry.allowSkip.get(player, this.context),
+                canFinish = false,
+            ),
+            onContinue = {
+                if (state != MessengerState.RUNNING) return@update
+                if (!canSkip) return@update
+                completeOrFinish()
+            },
+        )
+
     override fun dispose() {
         super.dispose()
+        KukeUiDialogueBridge.clear(player, kukeUiDialogueSessionId(player, entry.id))
         confirmationKeyHandler?.dispose()
         confirmationKeyHandler = null
     }

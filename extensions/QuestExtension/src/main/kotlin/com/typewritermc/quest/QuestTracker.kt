@@ -11,7 +11,9 @@ import com.typewritermc.core.utils.launch
 import com.typewritermc.engine.paper.facts.FactListenerSubscription
 import com.typewritermc.engine.paper.facts.listenForFacts
 import com.typewritermc.engine.paper.interaction.PlayerSessionManager
+import com.typewritermc.quest.entries.ObjectiveEntry
 import com.typewritermc.quest.entries.QuestEntry
+import com.typewritermc.quest.entries.interfaces.CachableFactObjective
 import com.typewritermc.quest.events.AsyncQuestStatusUpdate
 import com.typewritermc.quest.events.AsyncTrackedQuestUpdate
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +39,13 @@ class QuestTracker(
 
     private fun refreshWatchedFacts() {
         factWatchSubscription?.cancel(player)
-        val facts = Query.find<QuestEntry>().flatMap { it.facts }.toList()
+        val questFacts = Query.find<QuestEntry>().flatMap { it.facts }
+        val objectiveProgressFacts = Query.find<ObjectiveEntry>().mapNotNull { objective ->
+            (objective as? CachableFactObjective)?.progressTracking?.value?.takeIf { it.isSet }
+        }
+        val facts = (questFacts + objectiveProgressFacts).distinctBy { it.id }
+            .map { it as Ref<com.typewritermc.engine.paper.entry.entries.ReadableFactEntry> }
+            .toList()
         factWatchSubscription = player.listenForFacts(
             facts,
             listener = {
@@ -46,6 +54,7 @@ class QuestTracker(
                 }.forEach {
                     refresh(it.ref())
                 }
+                com.typewritermc.quest.kukeui.onKukeUiObjectiveFactProgressUpdate(this)
             }
         )
     }

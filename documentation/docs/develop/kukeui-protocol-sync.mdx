@@ -79,6 +79,33 @@ UTF strings are capped before writing so they fit Java modified UTF limits.
 
 Packets with mismatched session ids are ignored.
 
+## Typewriter QuestExtension to KukeUI
+
+Namespace: `typewriter_quests`.
+
+| Direction | Action | Payload | Result |
+|---|---|---|---|
+| Typewriter → KukeUI | `sync` | JSON dashboard quest state | Replaces the Typewriter quest list in KukeUI. |
+| KukeUI → Typewriter | `track` | JSON object `{ "id": string }` | Starts tracking the Typewriter quest with the matching id. |
+| KukeUI → Typewriter | `untrack` | JSON object `{ "id": string }` | Stops tracking the currently tracked Typewriter quest when the id matches. |
+
+Each quest object in `quests` contains only these fields:
+
+- `id`
+- `title`
+- `description`
+- `progress`
+- `rewardSummary`
+- `status`
+- `statusValue`
+- `tracked`
+- `trackable`
+- `untrackable`
+- `objectives`
+
+`objectives` contains Typewriter objective progress cards for display. Quest tracking actions always use the
+same `{ "id": string }` payload shape.
+
 ## KukeUI UI behavior notes
 
 - Spoken, option, timed, input, message, and actionbar dialogue kinds are supported by the client UI.

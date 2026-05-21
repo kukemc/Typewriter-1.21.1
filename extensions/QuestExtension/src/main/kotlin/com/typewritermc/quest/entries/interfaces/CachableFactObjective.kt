@@ -24,7 +24,19 @@ val objectiveDisplay by snippet(
     "<green>✔</green> <gray><display></gray>"
 )
 
-interface CachableFactObjective : ObjectiveEntry {
+interface ObjectiveProgress {
+    fun current(player: Player): Int
+    fun required(player: Player): Int
+    fun progress(player: Player): Int {
+        val required = required(player)
+        if (required <= 0) return 0
+        return ((current(player).toDouble() / required.toDouble()) * 100).toInt().coerceIn(0, 100)
+    }
+
+    fun completed(player: Player): Boolean
+}
+
+interface CachableFactObjective : ObjectiveEntry, ObjectiveProgress {
 
     @Help("The display supports the <value> and <target> tags for showing progress.")
     @Colored
@@ -56,6 +68,22 @@ interface CachableFactObjective : ObjectiveEntry {
         if (!completedBefore && completedAfter) {
             completionTriggers.triggerEntriesFor(player, player.interactionContext ?: context())
         }
+    }
+
+    override fun current(player: Player): Int = progressTracking.value.get()
+        ?.readForPlayersGroup(player)
+        ?.value
+        ?.coerceAtMost(required(player))
+        ?: 0
+
+    override fun required(player: Player): Int = progressTracking.target.get(
+        player,
+        player.interactionContext ?: context()
+    ).coerceAtLeast(0)
+
+    override fun completed(player: Player): Boolean {
+        val fact = progressTracking.value.get()?.readForPlayersGroup(player)
+        return progressTracking.isValid(fact, player, player.interactionContext ?: context())
     }
 
     override fun parser(): PlaceholderParser = placeholderParser {
